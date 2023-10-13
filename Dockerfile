@@ -6,7 +6,7 @@ ARG AUTOPSY_VERSION=4.21.0
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-    apt-get install -y tzdata testdisk wget gnupg sudo
+    apt-get install -y tzdata testdisk wget gnupg lsof sudo
 
 WORKDIR /tmp
 
@@ -23,4 +23,10 @@ RUN ./install_application.sh -z /tmp/autopsy-${AUTOPSY_VERSION}.zip -i /opt/auto
 RUN rm /tmp/autopsy-${AUTOPSY_VERSION}.zip install_application.sh install_prereqs_ubuntu.sh sleuthkit-java_${SLEUTHKIT_VERSION}_amd64.deb 
 
 RUN ln -s /opt/autopsy/autopsy-${AUTOPSY_VERSION}/bin/autopsy /bin/
+
+RUN useradd -u 1000 -s /sbin/nologin -m app
+#RUN chmod -R ug+x /home/app
+RUN chown -R 1000 /opt/autopsy
+USER app
+
 CMD ["/bin/autopsy", "--nosplash"]
