@@ -33,7 +33,7 @@ $ xhost + && docker-compose up -d
 
 The volume mounted in the local folder ./case/ should be used to share disk images and cases files, so put here your evidence and load it in the Autopsy wizard.
 
-## Crédits
+## Credits
 
 - [bannsec](https://github.com/bannsec/autopsy_docker)
 - [sleuthkit](https://github.com/sleuthkit/autopsy/blob/develop/Running_Linux_OSX.md#installing-prerequisites)
