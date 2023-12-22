@@ -8,6 +8,14 @@ Note: The xhost + command is in the documentation for convienience. It is a secu
 
 ### Docker
 
+Build :
+
+```shell
+$ docker build . -t "autopsy:latest"
+```
+
+Launch :
+
 ```shell
 $ xhost +
 $ docker run \
