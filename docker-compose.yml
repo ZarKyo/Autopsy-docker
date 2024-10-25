@@ -1,7 +1,7 @@
-version: '3.3'
 services:
   autopsy:
-    image: . # if you built the image before, change that part. ex: “autopsy:last”
+    build: .
+    # image: autopsy:latest
     container_name: autopsy
     shm_size: "2gb"
     environment:
