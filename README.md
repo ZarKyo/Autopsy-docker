@@ -6,9 +6,9 @@ Dockerfile to run [Autopsy](https://www.autopsy.com/) — the digital forensics 
 
 | Component | Version |
 |---|---|
-| Base image | Ubuntu 20.04 |
-| Autopsy | 4.21.0 |
-| SleuthKit | 4.12.1 |
+| Base image | Ubuntu 24.04 |
+| Autopsy | 4.23.0 |
+| SleuthKit | 4.14.0 |
 | Java | OpenJDK 17 |
 
 ## Requirements
