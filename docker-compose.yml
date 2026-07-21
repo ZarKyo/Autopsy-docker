@@ -1,7 +1,7 @@
 services:
   autopsy:
     build: .
-    # image: autopsy:latest
+    image: autopsy:latest
     container_name: autopsy
     shm_size: "2gb"
     environment:
