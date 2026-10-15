@@ -1,0 +1,26 @@
+# SSH mode: run Autopsy with `ssh -X` from a remote or non-Linux client (MobaXterm, etc.)
+# Start with: docker compose -f docker-compose.ssh.yml up -d
+# Then:       ssh -X -p 2222 autopsy@localhost
+services:
+  autopsy-ssh:
+    build: .
+    image: autopsy:latest
+    container_name: autopsy-ssh
+    user: root
+    command: ["/usr/local/bin/ssh-entrypoint.sh"]
+    shm_size: "2gb"
+    environment:
+      - SSH_PASSWORD=${SSH_PASSWORD:-forensics}  # default password, override with the SSH_PASSWORD variable
+      - JAVA_TOOL_OPTIONS=-Dawt.useSystemAAFontSettings=on -Dswing.aatext=true -Dswing.defaultlaf=com.sun.java.swing.plaf.gtk.GTKLookAndFeel
+    volumes:
+      - "./case/:/home/autopsy/case"
+    ports:
+      # Localhost only by default. Set SSH_BIND=0.0.0.0 to reach it from another machine.
+      - "${SSH_BIND:-127.0.0.1}:2222:22"
+    # Optional: mount evidence images inside the container with ewfmount (FUSE). No privileged mode needed.
+    # devices:
+    #   - "/dev/fuse:/dev/fuse"
+    # cap_add:
+    #   - SYS_ADMIN
+    # security_opt:
+    #   - apparmor:unconfined
