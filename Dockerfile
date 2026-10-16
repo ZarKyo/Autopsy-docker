@@ -2,8 +2,7 @@
 
 # ---------------------------------------------------------------------------
 # Stage 1 - builder: compile SleuthKit and unpack Autopsy.
-# Compilers, headers, ant, git and the full JDK stay in this stage and never
-# reach the final image.
+# Build-only tooling never reaches the final image.
 # ---------------------------------------------------------------------------
 FROM ubuntu:24.04 AS builder
 
@@ -19,13 +18,12 @@ RUN apt-get update && \
 
 WORKDIR /tmp
 
-# Install Autopsy's declared prerequisites (JDK 17, GStreamer, forensics libs, build tools…)
+# Install Autopsy's declared prerequisites.
 # Pinned to the matching Autopsy release tag so deps stay in sync with the version being installed
 RUN wget ${AUTOPSY_SCRIPTS}/install_prereqs_ubuntu.sh && \
     bash install_prereqs_ubuntu.sh
 
 # Build SleuthKit from source: no .deb is published for 4.15.0, only a source tarball.
-# The script clones the tagged release with --depth 1, then runs bootstrap + configure --enable-java + make install.
 # Headers and static libs are dropped: only the shared libs, CLI tools and Java bindings are shipped.
 RUN wget ${AUTOPSY_SCRIPTS}/install_tsk_from_src.sh && \
     JAVA_HOME=${JDK_HOME} bash install_tsk_from_src.sh -p /tmp/sleuthkit -b sleuthkit-${SLEUTHKIT_VERSION} && \
@@ -82,10 +80,23 @@ COPY sshd_autopsy.conf /etc/ssh/sshd_config.d/autopsy.conf
 COPY --chmod=755 ssh-entrypoint.sh /usr/local/bin/ssh-entrypoint.sh
 
 # ldconfig registers the SleuthKit native libs so the JNI layer can find them at runtime.
-# Ubuntu 24.04 ships a default 'ubuntu' user at UID 1000; rename it to 'autopsy' rather than
-# creating a duplicate UID (useradd -u 1000 fails with "UID is not unique" on this base image)
+# Autopsy starts Solr with <install>/jre/bin/java, ignoring PATH and JAVA_HOME, and the release
+# zip ships a Windows JRE there (DLLs, no bin/java): Solr dies at its Java check and keyword
+# search never starts. That directory is replaced by a link to the image's own JRE.
+# Without -Xmx the JVM takes a quarter of the RAM, under the 2 GB Autopsy asks for; half the RAM
+# leaves the rest to Solr (-Xmx2048m, set by Autopsy) on a modest machine and scales on a big one.
+# The java -version and the grep fail the build if a release changes what these edits rely on.
+# Solr is bound to localhost so it is never reachable from outside the container.
+# Rename the base image's 'ubuntu' user (UID 1000) instead of creating a duplicate UID.
 RUN ldconfig && \
-    ln -s /opt/autopsy/autopsy-${AUTOPSY_VERSION}/bin/autopsy /bin/autopsy && \
+    AUTOPSY_HOME=/opt/autopsy/autopsy-${AUTOPSY_VERSION} && \
+    rm -rf "${AUTOPSY_HOME}/jre" && \
+    ln -s "$(dirname "$(dirname "$(readlink -f /usr/bin/java)")")" "${AUTOPSY_HOME}/jre" && \
+    "${AUTOPSY_HOME}/jre/bin/java" -version && \
+    echo 'SOLR_OPTS="$SOLR_OPTS -Djetty.host=127.0.0.1"' >> "${AUTOPSY_HOME}/autopsy/solr/bin/autopsy-solr.in.sh" && \
+    sed -i 's/^default_options="--branding autopsy /&-J-XX:MaxRAMPercentage=50 /' "${AUTOPSY_HOME}/etc/autopsy.conf" && \
+    grep -q 'MaxRAMPercentage=50' "${AUTOPSY_HOME}/etc/autopsy.conf" && \
+    ln -s "${AUTOPSY_HOME}/bin/autopsy" /bin/autopsy && \
     usermod -l autopsy -d /home/autopsy -m -s /sbin/nologin ubuntu && \
     groupmod -n autopsy ubuntu
 
