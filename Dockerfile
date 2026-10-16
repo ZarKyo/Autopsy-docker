@@ -1,51 +1,106 @@
-FROM ubuntu:24.04
+# syntax=docker/dockerfile:1
+
+# ---------------------------------------------------------------------------
+# Stage 1 - builder: compile SleuthKit and unpack Autopsy.
+# Build-only tooling never reaches the final image.
+# ---------------------------------------------------------------------------
+FROM ubuntu:24.04 AS builder
 
 ARG SLEUTHKIT_VERSION=4.15.0
 ARG AUTOPSY_VERSION=4.23.0
+ARG AUTOPSY_SCRIPTS=https://raw.githubusercontent.com/sleuthkit/autopsy/autopsy-${AUTOPSY_VERSION}/linux_macos_install_scripts
+ARG JDK_HOME=/usr/lib/jvm/java-1.17.0-openjdk-amd64
+ARG DEBIAN_FRONTEND=noninteractive
 
-# Avoid interactive prompts during apt installs
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Bootstrap tools needed before the Autopsy prereqs script runs
+# Bootstrap tools needed before the Autopsy prereqs script runs (it calls sudo)
 RUN apt-get update && \
-    apt-get install -y tzdata testdisk wget gnupg lsof sudo
+    apt-get install -y sudo wget unzip tzdata
 
 WORKDIR /tmp
 
-# Install Autopsy's declared prerequisites (JDK 17, GStreamer, forensics libs, build tools…)
+# Install Autopsy's declared prerequisites.
 # Pinned to the matching Autopsy release tag so deps stay in sync with the version being installed
-RUN wget https://raw.githubusercontent.com/sleuthkit/autopsy/autopsy-${AUTOPSY_VERSION}/linux_macos_install_scripts/install_prereqs_ubuntu.sh
-RUN chmod +x install_prereqs_ubuntu.sh
-RUN ./install_prereqs_ubuntu.sh
+RUN wget ${AUTOPSY_SCRIPTS}/install_prereqs_ubuntu.sh && \
+    bash install_prereqs_ubuntu.sh
 
 # Build SleuthKit from source: no .deb is published for 4.15.0, only a source tarball.
-# The script clones the tagged release with --depth 1, then runs bootstrap + configure --enable-java + make install.
-# ldconfig registers the newly installed native libs so the JNI layer can find them at runtime.
-RUN wget https://raw.githubusercontent.com/sleuthkit/autopsy/autopsy-${AUTOPSY_VERSION}/linux_macos_install_scripts/install_tsk_from_src.sh && \
-    chmod +x install_tsk_from_src.sh && \
-    JAVA_HOME=/usr/lib/jvm/java-1.17.0-openjdk-amd64 \
-    ./install_tsk_from_src.sh -p /tmp/sleuthkit -b sleuthkit-${SLEUTHKIT_VERSION} && \
-    ldconfig && \
-    rm -rf /tmp/sleuthkit install_tsk_from_src.sh
+# Headers and static libs are dropped: only the shared libs, CLI tools and Java bindings are shipped.
+RUN wget ${AUTOPSY_SCRIPTS}/install_tsk_from_src.sh && \
+    JAVA_HOME=${JDK_HOME} bash install_tsk_from_src.sh -p /tmp/sleuthkit -b sleuthkit-${SLEUTHKIT_VERSION} && \
+    rm -rf /usr/local/include /usr/local/lib/*.a /usr/local/lib/*.la
 
-# Download the Autopsy release zip and the official install script (pinned to the same tag)
-RUN wget https://github.com/sleuthkit/autopsy/releases/download/autopsy-${AUTOPSY_VERSION}/autopsy-${AUTOPSY_VERSION}.zip
-RUN wget https://raw.githubusercontent.com/sleuthkit/autopsy/autopsy-${AUTOPSY_VERSION}/linux_macos_install_scripts/install_application.sh
-RUN chmod +x install_application.sh
+# List the Ubuntu packages providing the shared libs SleuthKit links against (libewf, libafflib, libvhdi…),
+# so the final stage installs exactly those runtime libs instead of their -dev packages.
+# Both /usr/lib and /lib spellings are queried because dpkg records either one depending on the package.
+RUN find /usr/local/lib /usr/local/bin -type f -exec ldd {} + 2>/dev/null \
+      | awk '$2 == "=>" && $3 ~ /^\// {print $3}' | sort -u \
+      | xargs -r realpath | sed 'p; s#^/usr/lib/#/lib/#' \
+      | xargs -r dpkg -S 2>/dev/null | grep -v '^diversion' \
+      | cut -d: -f1 | sort -u > /tmp/tsk-runtime-deps.txt; \
+    cat /tmp/tsk-runtime-deps.txt && test -s /tmp/tsk-runtime-deps.txt
 
-# Extract and configure Autopsy under /opt/autopsy (runs the bundled unix_setup.sh internally)
-RUN ./install_application.sh -z /tmp/autopsy-${AUTOPSY_VERSION}.zip -i /opt/autopsy -j /usr/lib/jvm/java-1.17.0-openjdk-amd64
+# Extract and configure Autopsy under /opt/autopsy (runs the bundled unix_setup.sh, which copies the SleuthKit jar in)
+RUN wget https://github.com/sleuthkit/autopsy/releases/download/autopsy-${AUTOPSY_VERSION}/autopsy-${AUTOPSY_VERSION}.zip && \
+    wget ${AUTOPSY_SCRIPTS}/install_application.sh && \
+    bash install_application.sh -z /tmp/autopsy-${AUTOPSY_VERSION}.zip -i /opt/autopsy -j ${JDK_HOME}
 
-# Clean up build artifacts and installer scripts
-RUN rm /tmp/autopsy-${AUTOPSY_VERSION}.zip install_application.sh install_prereqs_ubuntu.sh
+# ---------------------------------------------------------------------------
+# Stage 2 - runtime: JRE + runtime libs only.
+# ---------------------------------------------------------------------------
+FROM ubuntu:24.04
 
-# Expose the autopsy binary globally
-RUN ln -s /opt/autopsy/autopsy-${AUTOPSY_VERSION}/bin/autopsy /bin/
+ARG AUTOPSY_VERSION=4.23.0
+ARG DEBIAN_FRONTEND=noninteractive
 
-# Ubuntu 24.04 ships a default 'ubuntu' user at UID 1000; rename it to 'app' rather than
-# creating a duplicate UID (useradd -u 1000 fails with "UID is not unique" on this base image)
-RUN usermod -l app -d /home/app -m -s /sbin/nologin ubuntu
-RUN chown -R 1000 /opt/autopsy
-USER app
+COPY --from=builder /tmp/tsk-runtime-deps.txt /tmp/
+
+# Runtime deps: JRE instead of JDK, the GStreamer set from Autopsy's prereqs script (video playback),
+# runtime counterparts of the -dev libs, plus:
+#   ewf-tools               ewfmount/ewfinfo/ewfverify (FUSE mounting is optional, see docker-compose.yml)
+#   openssh-server, xauth   optional SSH X11-forwarding mode (ssh-entrypoint.sh)
+# Host keys generated by the openssh-server postinst are removed: every container generates its own at start.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        openjdk-17-jre fonts-dejavu-core tzdata procps lsof \
+        testdisk ewf-tools libheif1 libde265-0 libpq5 \
+        libgstreamer1.0-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+        gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-tools gstreamer1.0-x \
+        gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio \
+        openssh-server xauth \
+        $(cat /tmp/tsk-runtime-deps.txt) && \
+    rm -rf /var/lib/apt/lists/* /tmp/tsk-runtime-deps.txt /etc/ssh/ssh_host_*
+
+# SleuthKit shared libs, CLI tools (fls, mmls, icat…) and Java bindings
+COPY --from=builder /usr/local/ /usr/local/
+
+# --chown at copy time: a separate `chown -R` would duplicate the whole Autopsy tree in a new layer
+COPY --from=builder --chown=1000:1000 /opt/autopsy /opt/autopsy
+
+COPY sshd_autopsy.conf /etc/ssh/sshd_config.d/autopsy.conf
+COPY --chmod=755 ssh-entrypoint.sh /usr/local/bin/ssh-entrypoint.sh
+
+# ldconfig registers the SleuthKit native libs so the JNI layer can find them at runtime.
+# Autopsy starts Solr with <install>/jre/bin/java, ignoring PATH and JAVA_HOME, and the release
+# zip ships a Windows JRE there (DLLs, no bin/java): Solr dies at its Java check and keyword
+# search never starts. That directory is replaced by a link to the image's own JRE.
+# Without -Xmx the JVM takes a quarter of the RAM, under the 2 GB Autopsy asks for; half the RAM
+# leaves the rest to Solr (-Xmx2048m, set by Autopsy) on a modest machine and scales on a big one.
+# The java -version and the grep fail the build if a release changes what these edits rely on.
+# Solr is bound to localhost so it is never reachable from outside the container.
+# Rename the base image's 'ubuntu' user (UID 1000) instead of creating a duplicate UID.
+RUN ldconfig && \
+    AUTOPSY_HOME=/opt/autopsy/autopsy-${AUTOPSY_VERSION} && \
+    rm -rf "${AUTOPSY_HOME}/jre" && \
+    ln -s "$(dirname "$(dirname "$(readlink -f /usr/bin/java)")")" "${AUTOPSY_HOME}/jre" && \
+    "${AUTOPSY_HOME}/jre/bin/java" -version && \
+    echo 'SOLR_OPTS="$SOLR_OPTS -Djetty.host=127.0.0.1"' >> "${AUTOPSY_HOME}/autopsy/solr/bin/autopsy-solr.in.sh" && \
+    sed -i 's/^default_options="--branding autopsy /&-J-XX:MaxRAMPercentage=50 /' "${AUTOPSY_HOME}/etc/autopsy.conf" && \
+    grep -q 'MaxRAMPercentage=50' "${AUTOPSY_HOME}/etc/autopsy.conf" && \
+    ln -s "${AUTOPSY_HOME}/bin/autopsy" /bin/autopsy && \
+    usermod -l autopsy -d /home/autopsy -m -s /sbin/nologin ubuntu && \
+    groupmod -n autopsy ubuntu
+
+USER autopsy
+WORKDIR /home/autopsy
 
 CMD ["/bin/autopsy", "--nosplash"]

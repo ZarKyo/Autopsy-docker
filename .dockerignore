@@ -1,0 +1,4 @@
+# Keep evidence images and git history out of the build context
+case/
+.git/
+*.md

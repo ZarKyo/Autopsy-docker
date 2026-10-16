@@ -1,3 +1,5 @@
+# X11 mode: GUI displayed on the host X server through the shared X11 socket (Linux host)
+# Start with: xhost +local:docker && docker compose up -d
 services:
   autopsy:
     build: .
@@ -8,8 +10,15 @@ services:
       - DISPLAY=${DISPLAY}
       - JAVA_TOOL_OPTIONS=-Dawt.useSystemAAFontSettings=on -Dswing.aatext=true -Dswing.defaultlaf=com.sun.java.swing.plaf.gtk.GTKLookAndFeel
     volumes:
+      - "./case/:/home/autopsy/case"
       - "/tmp/.X11-unix:/tmp/.X11-unix"
-      - "./case/:/home/app/case"
     network_mode: host
     devices:
       - "/dev/dri:/dev/dri"
+      # Optional: mount evidence images inside the container with ewfmount (FUSE). No privileged mode needed.
+      # Uncomment this line and the cap_add / security_opt blocks below.
+      # - "/dev/fuse:/dev/fuse"
+    # cap_add:
+    #   - SYS_ADMIN
+    # security_opt:
+    #   - apparmor:unconfined
