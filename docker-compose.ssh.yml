@@ -2,10 +2,10 @@
 # Start with: docker compose -f docker-compose.ssh.yml up -d
 # Then:       ssh -X -p 2222 autopsy@localhost
 services:
-  autopsy-ssh:
+  autopsy:
     build: .
     image: autopsy:latest
-    container_name: autopsy-ssh
+    container_name: autopsy
     user: root
     command: ["/usr/local/bin/ssh-entrypoint.sh"]
     shm_size: "2gb"
@@ -18,6 +18,7 @@ services:
       # Localhost only by default. Set SSH_BIND=0.0.0.0 to reach it from another machine.
       - "${SSH_BIND:-127.0.0.1}:2222:22"
     # Optional: mount evidence images inside the container with ewfmount (FUSE). No privileged mode needed.
+    # Uncomment the devices / cap_add / security_opt blocks below.
     # devices:
     #   - "/dev/fuse:/dev/fuse"
     # cap_add:

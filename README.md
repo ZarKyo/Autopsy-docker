@@ -89,7 +89,7 @@ The image includes `ewf-tools` (`ewfmount`, `ewfinfo`, `ewfverify`). To mount an
 docker exec -u root autopsy sh -c 'mkdir -p /mnt/ewf && ewfmount -X allow_other /home/autopsy/case/evidence.E01 /mnt/ewf'
 ```
 
-In SSH mode, replace `autopsy` with `autopsy-ssh` as the container name. The raw image is then available to Autopsy at `/mnt/ewf/ewf1`. The mount only exists inside the container. Autopsy reads E01 files directly, so this is only needed for other tools or special cases.
+The container is named `autopsy` in both modes. The raw image is then available to Autopsy at `/mnt/ewf/ewf1`. The mount only exists inside the container. Autopsy reads E01 files directly, so this is only needed for other tools or special cases.
 
 ## Evidence and Case Files
 
